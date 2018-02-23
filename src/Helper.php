@@ -130,6 +130,22 @@ EOF;
     }
 
     /**
+     * @param $locks
+     */
+    public function waitAllDependedOn($locks)
+    {
+        foreach ($locks as $lock) {
+            if ($this->getLockLifetime($lock) !== 0) {
+                if (($fh = fopen($locks, "r")) !== false) {
+                    flock($fh, LOCK_EX);
+                    flock($fh, LOCK_UN);
+                    fclose($fh);
+                }
+            }
+        }
+    }
+
+    /**
      * @param string $lockFile
      *
      * @throws Exception

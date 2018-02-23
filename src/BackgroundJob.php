@@ -55,6 +55,7 @@ class BackgroundJob
             'enabled'        => null,
             'haltDir'        => null,
             'debug'          => null,
+            'dependsOn'      => null,
         ];
 
         $this->helper = $helper ?: new Helper();
@@ -83,6 +84,17 @@ class BackgroundJob
         try {
             $this->helper->acquireLock($lockFile);
             $lockAcquired = true;
+
+            if (isset($this->config['dependsOn'])) {
+                $this->log("INFO: This job is depends on: ".$this->config['dependsOn']);
+                $locks = explode(',', $this->config['dependsOn']);
+                $n = count($locks);
+                for (; $n >= 0; $n--) {
+                    $locks[$n] = $this->getLockFile($locks[$n]);
+                }
+                $this->helper->waitAllDependedOn($locks);
+                $this->log("INFO: All dependencies has finished their work");
+            }
 
             if (isset($this->config['closure'])) {
                 $this->runFunction();
@@ -175,12 +187,14 @@ class BackgroundJob
     }
 
     /**
+     * @param bool $job
      * @return string
      */
-    protected function getLockFile()
+    protected function getLockFile($job = false)
     {
         $tmp = $this->tmpDir;
-        $job = $this->helper->escape($this->job);
+        $job = $job === false ? $this->job : $job;
+        $job = $this->helper->escape($job);
 
         if (!empty($this->config['environment'])) {
             $env = $this->helper->escape($this->config['environment']);
