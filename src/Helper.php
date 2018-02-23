@@ -132,9 +132,9 @@ EOF;
     /**
      * @param $locks
      */
-    public function waitAllDependedOn($locks)
+    public function waitAllDependencies($locks)
     {
-        foreach ($locks as $lock) {
+        foreach (array_reverse($locks) as $lock) {
             if ($this->getLockLifetime($lock) !== 0) {
                 if (($fh = fopen($locks, "r")) !== false) {
                     flock($fh, LOCK_EX);

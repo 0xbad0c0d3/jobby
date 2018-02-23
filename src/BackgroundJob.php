@@ -92,7 +92,7 @@ class BackgroundJob
                 for (; $n >= 0; $n--) {
                     $locks[$n] = $this->getLockFile($locks[$n]);
                 }
-                $this->helper->waitAllDependedOn($locks);
+                $this->helper->waitAllDependencies($locks);
                 $this->log("INFO: All dependencies has finished their work");
             }
 
