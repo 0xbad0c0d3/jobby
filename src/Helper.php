@@ -23,6 +23,8 @@ class Helper
      */
     private $mailer;
 
+    protected $processes = [];
+
     /**
      * @param \Swift_Mailer $mailer
      */
@@ -134,14 +136,21 @@ EOF;
      */
     public function waitAllDependencies($locks)
     {
-        foreach (array_reverse($locks) as $lock) {
-            if ($this->getLockLifetime($lock) !== 0) {
-                if (($fh = fopen($locks, "r")) !== false) {
-                    flock($fh, LOCK_EX);
-                    flock($fh, LOCK_UN);
+        foreach (array_reverse($locks) as $jobLock) {
+            if ($this->getLockLifetime($jobLock) !== false) {
+                if (($fh = fopen($jobLock, "rb+")) !== false) {
+                    if(flock($fh, LOCK_EX)) {
+                        flock($fh, LOCK_UN);
+                    }
                     fclose($fh);
+
+                    return true;
                 }
+
+                return false;
             }
+
+            return true;
         }
     }
 
@@ -167,21 +176,21 @@ EOF;
     /**
      * @param string $lockFile
      *
-     * @return int
+     * @return int|bool
      */
     public function getLockLifetime($lockFile)
     {
         if (!file_exists($lockFile)) {
-            return 0;
+            return false;
         }
 
         $pid = file_get_contents($lockFile);
         if (empty($pid)) {
-            return 0;
+            return false;
         }
 
         if (!posix_kill((int) $pid, 0)) {
-            return 0;
+            return false;
         }
 
         $stat = stat($lockFile);
@@ -265,4 +274,22 @@ EOF;
         }
         return 'NUL';
     }
+
+    /**
+     * @return string
+     */
+    public function getLogfile($output)
+    {
+        if ($output === null) {
+            return false;
+        }
+
+        $logs = dirname($output);
+        if (!file_exists($logs)) {
+            mkdir($logs, 0755, true);
+        }
+
+        return $output;
+    }
+
 }

@@ -3,12 +3,14 @@
 namespace Jobby;
 
 use Closure;
+use ReflectionClass;
 use SuperClosure\SerializableClosure;
 use Symfony\Component\Process\PhpExecutableFinder;
 
 class Jobby
 {
     use SerializerTrait;
+    use HelperTrait;
 
     /**
      * @var array
@@ -37,20 +39,9 @@ class Jobby
     {
         $this->setConfig($this->getDefaultConfig());
         $this->setConfig($config);
+        pcntl_signal(SIGCHLD, SIG_IGN);
 
         $this->script = realpath(__DIR__ . '/../bin/run-job');
-    }
-
-    /**
-     * @return Helper
-     */
-    protected function getHelper()
-    {
-        if ($this->helper === null) {
-            $this->helper = new Helper();
-        }
-
-        return $this->helper;
     }
 
     /**
@@ -119,8 +110,8 @@ class Jobby
             throw new Exception("'schedule' is required for '$job' job");
         }
 
-        if (!(isset($config['command']) xor isset($config['closure']))) {
-            throw new Exception("Either 'command' or 'closure' is required for '$job' job");
+        if (!(isset($config['command']) xor isset($config['closure']) xor isset($config['class']))) {
+            throw new Exception("Either 'command' or 'closure' or 'class' is required for '$job' job");
         }
 
         if (isset($config['command']) &&
@@ -146,7 +137,7 @@ class Jobby
      */
     public function run()
     {
-        $isUnix = ($this->helper->getPlatform() === Helper::UNIX);
+        $isUnix = ($this->getHelper()->getPlatform() === Helper::UNIX);
 
         if ($isUnix && !extension_loaded('posix')) {
             throw new Exception('posix extension is required');
@@ -159,11 +150,69 @@ class Jobby
                 continue;
             }
             if ($isUnix) {
-                $this->runUnix($job, $config);
+                if(isset($config['class'])){
+                    $this->runClass($job, $config);
+                } else {
+                    $this->runUnix($job, $config);
+                }
             } else {
                 $this->runWindows($job, $config);
             }
         }
+    }
+
+    /**
+     * @param $job
+     * @param array $config
+     * @throws Exception
+     * @throws \ReflectionException
+     */
+    protected function runClass($job, array $config)
+    {
+        $classArgs = [];
+        $classMethod = 'index';
+        $methodArgs = [];
+        if(is_array($config['class'])) {
+            if (isset($config['class'][0])) {
+                $className = $config['class'][0];
+            } else {
+                $class = $config['class'];
+                $classArgs = (array)(reset($class) ?: []);
+                $className = key($class);
+                $methodArgs = (array)(next($class) ?: []);
+                $classMethod = key($class) ?: 'index';
+            }
+        } else {
+            $className = $config['class'];
+        }
+        if (class_exists($className)) {
+            $reflection = new ReflectionClass($className);
+            $instance = $reflection->newInstanceArgs($classArgs);
+            if (method_exists($instance, $classMethod)) {
+                $pid = pcntl_fork();
+                if ($pid === 0) {
+                    if (PHP_OS == 'linux' && function_exists('cli_set_process_title')) {
+                        cli_set_process_title($job);
+                    }
+                    $logfile = $this->getHelper()->getLogfile($config['output']) ?: false;
+                    if ($logfile !== false) {
+                        ob_start();
+                    }
+                    call_user_func_array([$instance, $classMethod], $methodArgs);
+                    if ($logfile !== false) {
+                        file_put_contents($logfile, ob_get_clean(), FILE_APPEND | FILE_BINARY);
+                    }
+                    exit;
+                } elseif ($pid === -1) {
+                    throw new Exception("Fork for {$className} failed", pcntl_get_last_error());
+                }
+
+                return;
+            } else {
+                throw new Exception("Method {$className}::{$classMethod}() not found");
+            }
+        }
+        throw new Exception("Class {$className} not found");
     }
 
     /**

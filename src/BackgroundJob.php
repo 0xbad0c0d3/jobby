@@ -2,11 +2,12 @@
 
 namespace Jobby;
 
-use Cron\CronExpression;
+use ReflectionClass;
 
 class BackgroundJob
 {
     use SerializerTrait;
+    use HelperTrait;
 
     /**
      * @var Helper
@@ -56,6 +57,7 @@ class BackgroundJob
             'haltDir'        => null,
             'debug'          => null,
             'dependsOn'      => null,
+            'class'          => null,
         ];
 
         $this->helper = $helper ?: new Helper();
@@ -86,17 +88,17 @@ class BackgroundJob
             $lockAcquired = true;
 
             if (isset($this->config['dependsOn'])) {
-                $this->log("INFO: This job is depends on: ".$this->config['dependsOn']);
                 $locks = explode(',', $this->config['dependsOn']);
-                $n = count($locks);
+                $n = count($locks) - 1;
                 for (; $n >= 0; $n--) {
                     $locks[$n] = $this->getLockFile($locks[$n]);
                 }
                 $this->helper->waitAllDependencies($locks);
-                $this->log("INFO: All dependencies has finished their work");
             }
 
-            if (isset($this->config['closure'])) {
+            if(isset($this->config['class'])){
+                $this->runClass();
+            }elseif (isset($this->config['closure'])) {
                 $this->runFunction();
             } else {
                 $this->runFile();
@@ -112,7 +114,7 @@ class BackgroundJob
             $this->helper->releaseLock($lockFile);
 
             // remove log file if empty
-            $logfile = $this->getLogfile();
+            $logfile = $this->helper->getLogfile($this->config['output']);
             if (is_file($logfile) && filesize($logfile) <= 0) {
                 unlink($logfile);
             }
@@ -143,7 +145,7 @@ class BackgroundJob
             throw new Exception('"maxRuntime" is not supported on Windows');
         }
 
-        $runtime = $this->helper->getLockLifetime($lockFile);
+        $runtime = (int)$this->helper->getLockLifetime($lockFile);
         if ($runtime < $maxRuntime) {
             return;
         }
@@ -165,25 +167,6 @@ class BackgroundJob
             $this->config,
             $message
         );
-    }
-
-    /**
-     * @return string
-     */
-    protected function getLogfile()
-    {
-        if ($this->config['output'] === null) {
-            return false;
-        }
-
-        $logfile = $this->config['output'];
-
-        $logs = dirname($logfile);
-        if (!file_exists($logs)) {
-            mkdir($logs, 0755, true);
-        }
-
-        return $logfile;
     }
 
     /**
@@ -231,11 +214,11 @@ class BackgroundJob
     /**
      * @param string $message
      */
-    protected function log($message)
+    public function log($message)
     {
-        $now = date($this->config['dateFormat'], $_SERVER['REQUEST_TIME']);
+        $now = date($this->config['dateFormat'], time());
 
-        if ($logfile = $this->getLogfile()) {
+        if ($logfile = $this->helper->getLogfile($this->config['output'])) {
             file_put_contents($logfile, "[$now] $message\n", FILE_APPEND);
         }
     }
@@ -251,8 +234,8 @@ class BackgroundJob
             echo "Error! " . $e->getMessage() . "\n";
         }
         $content = ob_get_contents();
-        if ($logfile = $this->getLogfile()) {
-            file_put_contents($this->getLogfile(), $content, FILE_APPEND);
+        if ($logfile = $this->helper->getLogfile($this->config['output'])) {
+            file_put_contents($logfile, $content, FILE_APPEND);
         }
         ob_end_clean();
 
@@ -272,13 +255,13 @@ class BackgroundJob
             $runAs = $this->config['runAs'];
             $isRoot = (posix_getuid() === 0);
             if (!empty($runAs) && $isRoot) {
-                $useSudo = "sudo -u $runAs";
+                $useSudo = "sudo -u $runAs ";
             }
         }
 
         // Start execution. Run in foreground (will block).
         $command = $this->config['command'];
-        $logfile = $this->getLogfile() ?: $this->helper->getSystemNullDevice();
+        $logfile = $this->getHelper()->getLogfile($this->config['output']) ?: $this->helper->getSystemNullDevice();
         exec("$useSudo $command 1>> \"$logfile\" 2>&1", $dummy, $retval);
 
         if ($retval !== 0) {

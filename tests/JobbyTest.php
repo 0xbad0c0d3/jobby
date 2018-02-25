@@ -306,6 +306,82 @@ class JobbyTest extends \PHPUnit_Framework_TestCase
         );
     }
 
+    public function testDependencies(){
+        $jobby = new Jobby();
+
+        $jobby->add('first', [
+            'closure' => function () {
+                echo 'second,';
+                sleep(2);
+
+                return true;
+            },
+            'output' => $this->logFile,
+            'schedule' => '* * * * *',
+        ]);
+        $jobby->add('second', [
+            'closure' => function () {
+                echo "first,";
+                sleep(1);
+
+                return true;
+            },
+            'dependsOn' => 'first',
+            'output' => $this->logFile,
+            'schedule' => '* * * * *',
+        ]);
+        $jobby->add('third', [
+            'closure' => function () {
+                echo "third";
+
+                return true;
+            },
+            'dependsOn' => 'first,second',
+            'output' => $this->logFile,
+            'schedule' => '* * * * *',
+        ]);
+        $jobby->run();
+        sleep(4);
+        self::assertEquals('second,first,third', $this->getLogContent());
+    }
+
+    public function testRunClass(){
+        $jobby = new Jobby();
+        $jobby->add('test', [
+            'class' => '\\Jobby\\Tests\\SampleClass',
+            'schedule' => '* * * * *',
+            'output' => $this->logFile,
+        ]);
+        $jobby->add('test1', [
+            'class' => ['\\Jobby\\Tests\\SampleClass' => ['arg1', 'arg2']],
+            'schedule' => '* * * * *',
+            'output' => $this->logFile,
+        ]);
+        $jobby->add('test2', [
+            'class' => ['\\Jobby\\Tests\\SampleClass' => [], 'custom' => false],
+            'schedule' => '* * * * *',
+            'output' => $this->logFile,
+        ]);
+        $jobby->add('test3', [
+            'class' => ['\\Jobby\\Tests\\SampleClass' => ['arg1', 'arg2'], 'custom' => 'testarg'],
+            'schedule' => '* * * * *',
+            'output' => $this->logFile,
+        ]);
+        $jobby->add('test4', [
+            'class' => ['\\Jobby\\Tests\\SampleClass' => ['arg1', 'arg2'], 'custom' => ['testarg', 'test1']],
+            'schedule' => '* * * * *',
+            'output' => $this->logFile,
+        ]);
+        $jobby->run();
+        sleep(1);
+        $lines = explode(PHP_EOL, trim($this->getLogContent()));
+        $expect = ['index', 'index arg1, arg2','custom', 'custom arg1, arg2 testarg', 'custom arg1, arg2 testarg, test1'];
+        $done = array_intersect($expect, $lines);
+        self::assertEquals(count($expect), count($lines), 'The output has wrong number of lines');
+        sort($done); sort($expect);
+        self::assertEquals($expect, $done);
+    }
+
     /**
      * @covers ::run
      * @covers ::runWindows
@@ -324,9 +400,9 @@ class JobbyTest extends \PHPUnit_Framework_TestCase
             ]
         );
 
-        $timeStart = microtime();
+        $timeStart = gettimeofday(true);
         $jobby->run();
-        $duration = microtime() - $timeStart;
+        $duration = gettimeofday(true) - $timeStart;
 
         $this->assertLessThan(0.5, $duration);
     }
